@@ -1,4 +1,9 @@
 from local_constant import server, password, user
+import logging
+
+logger = logging.getLogger(__name__)
+logger.basicConfig(filename='email_fetcher.log', format='%(levelname)s:%(asctime)s %(message)s',
+                   datefmt='%m/%d/%Y %I:%M:%S %p')
 
 
 def connect_imap_server():
@@ -24,7 +29,7 @@ def fetch_parse_move():
     ids = data[0]  # data is a list.
     id_list = ids.split()  # ids is a space separated string
     for id in id_list:
-
+        logger.info("Starting for the maid Id:{}".format(id))
         result, data = mail.uid('fetch', id, '(RFC822)')  # fetch the email body (RFC822) for the given ID
 
         raw_email = data[0][1]  # here's the body, which is raw text of the whole email
@@ -32,15 +37,15 @@ def fetch_parse_move():
         email_dict = parse_email(raw_email)
         if email_dict is not None:
             is_inserted, conn = insert_database(email_dict)
-             # Show the mail into showing.
+            # Show the mail into showing.
             if is_inserted:
                 if move_message(id):
                     conn.close()
                 else:
-                    print "Unable to move message:{}".format(id)
+                    logger.debug("Unable to move message:{}".format(id))
                     conn.rollback()
             else:
-                print "Unable to insert into database:{}".format(id)
+                logger.debug("Unable to insert into database:{}".format(id))
 
 
 def move_message(msg_uid):
@@ -58,14 +63,15 @@ def move_message(msg_uid):
             if expunge_reponse[0] == 'OK':
                 return True
             else:
-                print "Expunge fail:{}".format(msg_uid)
+                logger.debug("Expunge fail:{}".format(msg_uid))
             return False
         else:
-            print "Delete fail:{}".format(msg_uid)
+            logger.debug("Delete fail:{}".format(msg_uid))
     else:
-        print "Copy fail:{}".format(msg_uid)
+        logger.debug("Copy fail:{}".format(msg_uid))
 
     return False
+
 
 def insert_database(email_dict):
     """
@@ -88,9 +94,9 @@ def insert_database(email_dict):
     mls = email_dict.get('mls')
     property = email_dict.get('property')
     price = email_dict.get('price', 0)
-    showing_agent = rreplace(email_dict.get('showing_agent'),"'")
-    email = rreplace(email_dict.get('email'),"'")
-    office = rreplace(email_dict.get('office'),"'")
+    showing_agent = rreplace(email_dict.get('showing_agent'), "'")
+    email = rreplace(email_dict.get('email'), "'")
+    office = rreplace(email_dict.get('office'), "'")
     office_phone = email_dict.get('office_phone')
     cell_phone = email_dict.get('cell_phone')
     type_text = email_dict.get('type')
@@ -107,16 +113,18 @@ def insert_database(email_dict):
         x.execute(add_salary)
         conn.commit()
     except:
-        print add_salary
+        logger.debug(add_salary)
         conn.rollback()
         return False, conn
 
     # conn.close()
     return True, conn
 
-def rreplace(s, old, new='', occurrence = 0):
+
+def rreplace(s, old, new='', occurrence=0):
     li = s.rsplit(old)
     return new.join(li)
+
 
 def parse_email(mail_object):
     """
@@ -181,7 +189,6 @@ def parse_email(mail_object):
             index = html_string.find("$")
             price = int(html_string[index + 1:index + 5].strip())
 
-        # print email_message.get_payload()[0].get_payload(decode=True)
         email_string_array = email_message.get_payload()[0].get_payload(decode=True).split('\r\n')
     except IndexError:
         return
@@ -190,7 +197,6 @@ def parse_email(mail_object):
     agent_string = 'SHOWING AGENT'
     index = -1
     email_dict = {"price": price}
-    # print email_string_array
     for email_string in email_string_array:
         index += 1
         if listing_string.lower() in email_string.lower().strip():
