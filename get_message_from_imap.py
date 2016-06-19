@@ -1,6 +1,4 @@
-server = 'secure.emailsrvr.com'
-user = 'listingemail@pyramiscompany.com'
-password = 'DzW93magt6XBKjvwDFtT'
+from local_constant import server, password, user
 
 
 def connect_imap_server():
