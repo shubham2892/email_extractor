@@ -23,6 +23,7 @@ def fetch_parse_move():
     - Move the message to "showings"
     :return:
     """
+
     mail = connect_imap_server()
     result, data = mail.uid('search', None, 'ALL')
 
