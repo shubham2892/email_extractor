@@ -162,6 +162,10 @@ def parse_email(mail_object):
                                                   ||
                                                   ||
                                                   ||
+                                                ~~~~~~
+                                                \    /
+                                                 \  /
+                                                  \/
   sample output:
   {'cell_phone': ' 210-663-7164',
  'date': '2015-06-09',
