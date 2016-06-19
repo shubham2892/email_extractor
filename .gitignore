@@ -1,1 +1,3 @@
 local_constant.py
+*.pyc
+.idea/*
