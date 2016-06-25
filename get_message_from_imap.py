@@ -7,8 +7,10 @@ logging.basicConfig(filename='email_fetcher.log', format='%(levelname)s:%(asctim
 
 LISTING = 1
 SHOWINGS = 2
+ERROR_MESSAGES = 3
 
-MAILBOX_TYPE_MAP = {LISTING: "INBOX.Showings", SHOWINGS: "INBOX.Listing_Inquiries"}
+MAILBOX_TYPE_MAP = {SHOWINGS: "INBOX.Showings", LISTING: "INBOX.Listing_Inquiries",
+                    ERROR_MESSAGES: "INBOX.errored_messages"}
 
 
 def connect_imap_server():
@@ -16,7 +18,7 @@ def connect_imap_server():
 
     mail = imaplib.IMAP4_SSL(server)
     mail.login(user, password)
-    mail.select("INBOX.Testing")  # connect to inbox.
+    mail.select("INBOX")  # connect to inbox.
     return mail
 
 
@@ -44,15 +46,16 @@ def fetch_parse_move():
         if email_string is not None:
             is_inserted, conn = insert_database(email_string)
             # Show the mail into showing.
-
             if is_inserted:
                 if move_message(id, email_type):
                     conn.close()
                 else:
                     logger.debug("Unable to move message:{}".format(id))
                     conn.rollback()
-            else:
-                logger.debug("Unable to insert into database:{}".format(id))
+
+        else:
+            # move the message to errored messages.
+            move_message(id, ERROR_MESSAGES)
 
 
 def move_message(msg_uid, email_type):
@@ -209,8 +212,12 @@ def parse_listing(email_message):
         """
 
     from datetime import datetime
+    import dateutil.parser
+
 
     price = 0
+    email_date_time = dateutil.parser.parse(email_message['Date']).strftime('%Y-%m-%d %H:%M:%S')
+
     try:
         html_string = email_message.get_payload()[1].get_payload(decode=True)
         if "Price:" in html_string:
@@ -219,6 +226,12 @@ def parse_listing(email_message):
 
         email_string_array = email_message.get_payload()[0].get_payload(decode=True).split('\r\n')
     except IndexError:
+        subject = email_message['subject']
+        sender = email_message['from']
+        logger.error(
+            "Hotpad email cannot be inserted into database. Subject:{}, sender:{}, date_time:{}".format(subject, sender,
+                                                                                                        email_date_time))
+
         return
 
     listing_string = 'LISTING INFORMATION'
@@ -262,18 +275,21 @@ def parse_listing(email_message):
 
 
 def create_listing_insert_string(email_dict):
+    if not email_dict:
+        return None
+
     mls = email_dict.get('mls')
     property = email_dict.get('property')
     price = email_dict.get('price', 0)
     showing_agent = rreplace(email_dict.get('showing_agent'), "'")
     email = rreplace(email_dict.get('email'), "'")
     office = rreplace(email_dict.get('office'), "'")
-    office_phone = email_dict.get('office_phone')
-    cell_phone = email_dict.get('cell_phone')
-    type_text = email_dict.get('type')
-    status = email_dict.get('status')
+    office_phone = email_dict.get('office_phone').strip()
+    cell_phone = email_dict.get('cell_phone').strip()
+    type_text = email_dict.get('type').strip()
+    status = email_dict.get('status').strip()
     date_text = email_dict.get('date')
-    time_text = email_dict.get('time')
+    time_text = email_dict.get('time').strip()
 
     add_salary = "INSERT INTO showings(mls, property, price, showing_agent, email, office, office_phone, " \
                  "cell_phone, type, status, date, time) VALUES (%s,'%s',%d,'%s','%s','%s','%s','%s','%s','%s','%s','%s')" \
@@ -284,10 +300,13 @@ def create_listing_insert_string(email_dict):
 
 
 def create_enquiry_insert_string(email_dict):
-    contact_name = email_dict.get('contact_name')
-    contact_email = email_dict.get('contact_email')
-    contact_phone = email_dict.get('contact_phone')
-    property = email_dict.get('property')
+    if not email_dict:
+        return None
+
+    contact_name = email_dict.get('contact_name').strip()
+    contact_email = email_dict.get('contact_email').strip()
+    contact_phone = email_dict.get('contact_phone').strip()
+    property = email_dict.get('property').strip()
     date_time = email_dict.get('contact_time')
     source = email_dict.get('source')
 
@@ -306,6 +325,8 @@ def parse_enquiry_hotpad(email_message):
     logger.info("Parsing enquiry")
     email_string = parse_email_body(email_message)
     soup = BeautifulSoup(email_string)
+    email_date_time = dateutil.parser.parse(email_message['Date']).strftime('%Y-%m-%d %H:%M:%S')
+
     try:
         contact_name = list(soup.find_all('span', style='font-size: 0.9em; line-height: 1.0em;')[0].descendants)[2]
         contact_email = list(soup.find_all('span', style='font-size: 0.9em; line-height: 1.0em;')[0].descendants)[5][
@@ -319,12 +340,15 @@ def parse_enquiry_hotpad(email_message):
         else:
             contact_phone = ''
     except IndexError as e:
+        subject = email_message['subject']
+        sender = email_message['from']
         logger.debug(soup)
-        logger.error(e)
+        logger.error(
+            "Hotpad email cannot be inserted into database. Subject:{}, sender:{}, date_time:{}".format(subject, sender,
+                                                                                                        email_date_time))
         return {}
 
-    property = email_message['subject'][8:].strip()
-    email_date_time = dateutil.parser.parse(email_message['Date']).strftime('%Y-%m-%d %H:%M:%S')
+    property = email_message['subject'].split(",")[0][8:].strip()
     email_dict = {'source': 'hotpads', 'contact_name': contact_name, 'contact_email': contact_email,
                   'contact_phone': contact_phone, 'contact_time': email_date_time, 'property': property}
     return email_dict
@@ -338,7 +362,7 @@ def parse_enquiry_trulia(email_message):
     contact_email = email_string_array[10].split(":")[1].strip().replace(";", "")
     contact_phone = email_string_array[11].split(":")[1].strip()
     source = "Trulia"
-    property = email_message['subject'][16:].strip()
+    property = email_message['subject'][16:].strip().replace(",", "")
     email_date_time = dateutil.parser.parse(email_message['Date']).strftime('%Y-%m-%d %H:%M:%S')
     email_dict = {'source': source, 'contact_name': contact_name, 'contact_email': contact_email,
                   'contact_phone': contact_phone, 'contact_time': email_date_time, 'property': property}
@@ -369,6 +393,8 @@ def parse_enquiry_homes(email_message):
     from bs4 import BeautifulSoup
     import dateutil.parser
     logger.info("Parsing enquiry")
+    email_date_time = dateutil.parser.parse(email_message['Date']).strftime('%Y-%m-%d %H:%M:%S')
+
     email_html = email_message.get_payload()[1].get_payload()
     soup = BeautifulSoup(email_html)
     email_string_div_array = list(soup.find_all('div')[0].descendants)
@@ -385,10 +411,15 @@ def parse_enquiry_homes(email_message):
                    2:-2]
     except IndexError as e:
         logger.debug(soup)
-        logger.error(e)
+        subject = email_message['subject']
+        sender = email_message['from']
+        logger.debug(soup)
+        logger.error(
+            "Hotpad email cannot be inserted into database. Subject:{}, sender:{}, date_time:{}".format(subject, sender,
+                                                                                                        email_date_time))
+
         return {}
 
-    email_date_time = dateutil.parser.parse(email_message['Date']).strftime('%Y-%m-%d %H:%M:%S')
     email_dict = {'source': source, 'contact_name': first_name + last_name, 'contact_email': contact_email,
                   'contact_phone': contact_phone, 'contact_time': email_date_time, 'property': property}
 
